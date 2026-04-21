@@ -50,7 +50,7 @@ async function suspendInactiveTabs() {
   }
 
   const suspendTimeout = settings.suspendTimeout ?? DEFAULT_SETTINGS.suspendTimeout;
-  const inactiveForMs = suspendTimeout * 10 * 1000;
+  const inactiveForMs = suspendTimeout * 5 * 1000;
   const now = Date.now();
   const allTabs = await chrome.tabs.query({});
 
@@ -61,6 +61,7 @@ async function suspendInactiveTabs() {
       !tab.discarded &&
       !tab.pinned &&
       !tab.audible &&
+      tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE &&
       now - lastAccessed >= inactiveForMs;
 
     if (!shouldSuspend) {
@@ -77,18 +78,67 @@ async function suspendInactiveTabs() {
 }
 
 // Grup durumunu izle
-chrome.tabGroups.onUpdated.addListener(async (group) => {
-  const groups = await chrome.storage.local.get('groups');
-  if (groups.groups && groups.groups[group.id]) {
-    groups.groups[group.id].collapsed = group.collapsed;
-    await chrome.storage.local.set({ groups: groups.groups });
+chrome.tabGroups.onCreated.addListener(saveGroupSnapshot);
+chrome.tabGroups.onUpdated.addListener(saveGroupSnapshot);
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if ((changeInfo.title || changeInfo.url || changeInfo.favIconUrl) && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+    try {
+      const group = await chrome.tabGroups.get(tab.groupId);
+      await saveGroupSnapshot(group);
+    } catch (error) {
+      console.log('Grup bilgisi güncellenemedi:', error);
+    }
   }
 });
 
-// Grup silindiğinde depolamadan kaldır
+// Grup kapatıldığında kaydı silme; kapalı grup olarak popup'ta göster.
 chrome.tabGroups.onRemoved.addListener(async (group) => {
-  const result = await chrome.storage.local.get('groups');
+  const result = await chrome.storage.local.get(['groups', 'deletedGroupIds']);
   const groups = result.groups || {};
-  delete groups[group.id];
-  await chrome.storage.local.set({ groups });
+  const deletedGroupIds = result.deletedGroupIds || {};
+  const groupId = String(group.id);
+
+  if (deletedGroupIds[groupId]) {
+    delete groups[group.id];
+    delete deletedGroupIds[groupId];
+    await chrome.storage.local.set({ groups, deletedGroupIds });
+    return;
+  }
+
+  if (groups[group.id]) {
+    groups[group.id].active = false;
+    groups[group.id].collapsed = true;
+    groups[group.id].lastUpdated = Date.now();
+    await chrome.storage.local.set({ groups });
+  }
 });
+
+async function saveGroupSnapshot(group) {
+  try {
+    const tabs = await chrome.tabs.query({ groupId: group.id });
+    const result = await chrome.storage.local.get('groups');
+    const groups = result.groups || {};
+
+    groups[group.id] = {
+      name: group.title || groups[group.id]?.name || 'İsimsiz Grup',
+      color: group.color || groups[group.id]?.color || 'blue',
+      collapsed: group.collapsed,
+      active: true,
+      windowId: group.windowId,
+      tabIds: tabs.map(tab => tab.id),
+      tabs: tabs
+        .filter(tab => tab.url)
+        .map(tab => ({
+          title: tab.title || tab.url,
+          url: tab.url,
+          favIconUrl: tab.favIconUrl || ''
+        })),
+      lastUpdated: Date.now()
+    };
+
+    await chrome.storage.local.set({ groups });
+  } catch (error) {
+    console.log('Grup kaydı güncellenemedi:', error);
+  }
+}
