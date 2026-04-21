@@ -21,7 +21,14 @@ document.getElementById('createGroup').addEventListener('click', async () => {
     return;
   }
 
-  const tabs = await chrome.tabs.query({ currentWindow: true, highlighted: true });
+  const windowId = await getCurrentWindowId();
+
+  if (windowId === undefined) {
+    alert('Aktif Chrome penceresi bulunamadı!');
+    return;
+  }
+
+  const tabs = await chrome.tabs.query({ windowId, highlighted: true });
   
   if (tabs.length === 0) {
     alert('Lütfen gruplamak istediğiniz sekmeleri seçin!');
@@ -53,14 +60,25 @@ document.getElementById('createGroup').addEventListener('click', async () => {
 
 // Grupları yükle
 async function loadGroups() {
-  const allTabs = await chrome.tabs.query({ currentWindow: true });
-  const tabGroups = await chrome.tabGroups.query({ currentWindow: true });
-  
-  document.getElementById('tabCount').textContent = allTabs.length;
-  document.getElementById('groupCount').textContent = tabGroups.length;
-
   const groupsList = document.getElementById('groupsList');
   groupsList.innerHTML = '';
+
+  const windowId = await getCurrentWindowId();
+
+  if (windowId === undefined) {
+    document.getElementById('tabCount').textContent = '0';
+    document.getElementById('groupCount').textContent = '0';
+    groupsList.innerHTML = '<div class="empty-state">Aktif Chrome penceresi bulunamadı.</div>';
+    return;
+  }
+
+  const [allTabs, tabGroups] = await Promise.all([
+    chrome.tabs.query({ windowId }),
+    chrome.tabGroups.query({ windowId })
+  ]);
+
+  document.getElementById('tabCount').textContent = allTabs.length;
+  document.getElementById('groupCount').textContent = tabGroups.length;
 
   if (tabGroups.length === 0) {
     groupsList.innerHTML = '<div class="empty-state">Henüz grup yok.<br>Sekmeleri seçip gruplamaya başlayın!</div>';
@@ -155,6 +173,17 @@ async function deleteGroup(groupId) {
 }
 
 // Yardımcı fonksiyonlar
+async function getCurrentWindowId() {
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (activeTab?.windowId !== undefined) {
+    return activeTab.windowId;
+  }
+
+  const [currentTab] = await chrome.tabs.query({ currentWindow: true });
+  return currentTab?.windowId;
+}
+
 async function getGroups() {
   const result = await chrome.storage.local.get('groups');
   return result.groups || {};
