@@ -50,7 +50,7 @@ async function suspendInactiveTabs() {
   }
 
   const suspendTimeout = settings.suspendTimeout ?? DEFAULT_SETTINGS.suspendTimeout;
-  const inactiveForMs = suspendTimeout * 60 * 1000;
+  const inactiveForMs = suspendTimeout * 10 * 1000;
   const now = Date.now();
   const allTabs = await chrome.tabs.query({});
 

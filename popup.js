@@ -72,17 +72,47 @@ async function loadGroups() {
     
     const groupItem = document.createElement('div');
     groupItem.className = 'group-item';
-    groupItem.innerHTML = `
-      <div class="group-color" style="background: ${getColorHex(group.color)}"></div>
-      <div class="group-info">
-        <div class="group-name">${group.title || 'İsimsiz Grup'}</div>
-        <div class="group-count">${groupTabs.length} sekme</div>
-      </div>
-      <div class="group-actions">
-        <button class="btn-small btn-suspend" data-group-id="${group.id}">💤</button>
-        <button class="btn-small" data-group-id="${group.id}" data-action="delete">🗑️</button>
-      </div>
-    `;
+
+    const groupColor = document.createElement('div');
+    groupColor.className = 'group-color';
+    groupColor.style.background = getColorHex(group.color);
+
+    const groupInfo = document.createElement('div');
+    groupInfo.className = 'group-info';
+
+    const groupName = document.createElement('div');
+    groupName.className = 'group-name';
+    groupName.textContent = group.title || 'İsimsiz Grup';
+
+    const groupCount = document.createElement('div');
+    groupCount.className = 'group-count';
+    groupCount.textContent = `${groupTabs.length} sekme`;
+
+    const groupActions = document.createElement('div');
+    groupActions.className = 'group-actions';
+
+    const suspendButton = document.createElement('button');
+    suspendButton.className = 'btn-small btn-suspend';
+    suspendButton.dataset.groupId = group.id;
+    suspendButton.textContent = '💤';
+    suspendButton.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await suspendGroup(group.id);
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'btn-small';
+    deleteButton.dataset.groupId = group.id;
+    deleteButton.dataset.action = 'delete';
+    deleteButton.textContent = '🗑️';
+    deleteButton.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await deleteGroup(group.id);
+    });
+
+    groupInfo.append(groupName, groupCount);
+    groupActions.append(suspendButton, deleteButton);
+    groupItem.append(groupColor, groupInfo, groupActions);
 
     groupItem.addEventListener('click', async (e) => {
       if (e.target.tagName !== 'BUTTON') {
@@ -96,24 +126,6 @@ async function loadGroups() {
 
     groupsList.appendChild(groupItem);
   }
-
-  // Suspend butonları
-  document.querySelectorAll('.btn-suspend').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const groupId = parseInt(btn.dataset.groupId);
-      await suspendGroup(groupId);
-    });
-  });
-
-  // Silme butonları
-  document.querySelectorAll('[data-action="delete"]').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const groupId = parseInt(btn.dataset.groupId);
-      await deleteGroup(groupId);
-    });
-  });
 }
 
 // Grubu askıya al (RAM tasarrufu)
