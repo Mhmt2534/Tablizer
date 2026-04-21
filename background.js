@@ -1,52 +1,80 @@
+const AUTO_SUSPEND_ALARM = 'autoSuspendCheck';
+const DEFAULT_SETTINGS = {
+  autoSuspend: true,
+  suspendTimeout: 1 // dakika
+};
+
 // Otomatik RAM optimizasyonu
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   console.log('Sekme Yöneticisi yüklendi!');
-  
-  // Varsayılan ayarları kaydet
-  chrome.storage.local.set({
-    autoSuspend: true,
-    suspendTimeout: 30 // 30 dakika
+
+  const settings = await chrome.storage.local.get(['autoSuspend', 'suspendTimeout']);
+  await chrome.storage.local.set({
+    autoSuspend: settings.autoSuspend ?? DEFAULT_SETTINGS.autoSuspend,
+    suspendTimeout: settings.suspendTimeout ?? DEFAULT_SETTINGS.suspendTimeout
   });
+
+  await updateAutoSuspendAlarm();
 });
 
-// Belirli süre kullanılmayan sekmeleri otomatik askıya al
-let tabTimers = {};
+chrome.runtime.onStartup.addListener(updateAutoSuspendAlarm);
 
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  const tabId = activeInfo.tabId;
-  
-  // Aktif sekmeyi işaretle
-  clearTimeout(tabTimers[tabId]);
-  delete tabTimers[tabId];
-  
-  // Diğer sekmeleri izlemeye başla
-  const settings = await chrome.storage.local.get(['autoSuspend', 'suspendTimeout']);
-  
-  if (settings.autoSuspend) {
-    const allTabs = await chrome.tabs.query({ currentWindow: true });
-    
-    for (const tab of allTabs) {
-      if (tab.id !== tabId && !tab.active && !tab.discarded) {
-        clearTimeout(tabTimers[tab.id]);
-        
-        tabTimers[tab.id] = setTimeout(async () => {
-          try {
-            await chrome.tabs.discard(tab.id);
-            console.log(`Sekme askıya alındı: ${tab.title}`);
-          } catch (error) {
-            console.log('Sekme askıya alınamadı:', error);
-          }
-        }, settings.suspendTimeout * 60 * 1000);
-      }
-    }
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && (changes.autoSuspend || changes.suspendTimeout)) {
+    updateAutoSuspendAlarm();
   }
 });
 
-// Sekme kapatıldığında zamanlayıcıyı temizle
-chrome.tabs.onRemoved.addListener((tabId) => {
-  clearTimeout(tabTimers[tabId]);
-  delete tabTimers[tabId];
+async function updateAutoSuspendAlarm() {
+  const settings = await chrome.storage.local.get(['autoSuspend']);
+
+  if (settings.autoSuspend ?? DEFAULT_SETTINGS.autoSuspend) {
+    await chrome.alarms.create(AUTO_SUSPEND_ALARM, { periodInMinutes: 1 });
+  } else {
+    await chrome.alarms.clear(AUTO_SUSPEND_ALARM);
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AUTO_SUSPEND_ALARM) {
+    suspendInactiveTabs();
+  }
 });
+
+// Belirli süre kullanılmayan sekmeleri otomatik askıya al
+async function suspendInactiveTabs() {
+  const settings = await chrome.storage.local.get(['autoSuspend', 'suspendTimeout']);
+
+  if (!(settings.autoSuspend ?? DEFAULT_SETTINGS.autoSuspend)) {
+    return;
+  }
+
+  const suspendTimeout = settings.suspendTimeout ?? DEFAULT_SETTINGS.suspendTimeout;
+  const inactiveForMs = suspendTimeout * 60 * 1000;
+  const now = Date.now();
+  const allTabs = await chrome.tabs.query({});
+
+  for (const tab of allTabs) {
+    const lastAccessed = tab.lastAccessed || now;
+    const shouldSuspend =
+      !tab.active &&
+      !tab.discarded &&
+      !tab.pinned &&
+      !tab.audible &&
+      now - lastAccessed >= inactiveForMs;
+
+    if (!shouldSuspend) {
+      continue;
+    }
+
+    try {
+      await chrome.tabs.discard(tab.id);
+      console.log(`Sekme askıya alındı: ${tab.title}`);
+    } catch (error) {
+      console.log('Sekme askıya alınamadı:', error);
+    }
+  }
+}
 
 // Grup durumunu izle
 chrome.tabGroups.onUpdated.addListener(async (group) => {
