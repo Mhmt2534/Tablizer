@@ -92,26 +92,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
-// Grup kapatıldığında kaydı silme; kapalı grup olarak popup'ta göster.
+// Grup kapatıldığında veya silindiğinde depolamadan kaldır.
 chrome.tabGroups.onRemoved.addListener(async (group) => {
-  const result = await chrome.storage.local.get(['groups', 'deletedGroupIds']);
+  const result = await chrome.storage.local.get('groups');
   const groups = result.groups || {};
-  const deletedGroupIds = result.deletedGroupIds || {};
-  const groupId = String(group.id);
-
-  if (deletedGroupIds[groupId]) {
-    delete groups[group.id];
-    delete deletedGroupIds[groupId];
-    await chrome.storage.local.set({ groups, deletedGroupIds });
-    return;
-  }
-
-  if (groups[group.id]) {
-    groups[group.id].active = false;
-    groups[group.id].collapsed = true;
-    groups[group.id].lastUpdated = Date.now();
-    await chrome.storage.local.set({ groups });
-  }
+  delete groups[group.id];
+  await chrome.storage.local.set({ groups });
 });
 
 async function saveGroupSnapshot(group) {

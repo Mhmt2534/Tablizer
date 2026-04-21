@@ -1,5 +1,4 @@
 let selectedColor = 'blue';
-const restoringGroupIds = new Set();
 const deletingGroupIds = new Set();
 
 // Renk seçimi
@@ -91,25 +90,10 @@ async function loadGroups() {
   const tabGroups = allGroups.filter(group => group.windowId === windowId);
   await saveActiveGroups(tabGroups, allTabs);
 
-  const savedGroups = await getGroups();
-  const activeGroupIds = new Set(tabGroups.map(group => String(group.id)));
-  const activeGroupSignatures = new Set(
-    tabGroups.map(group => getGroupUrlSignature(allTabs.filter(tab => tab.groupId === group.id)))
-  );
-  const closedGroups = Object.entries(savedGroups).filter(([groupId, group]) => {
-    return (
-      !activeGroupIds.has(groupId) &&
-      group.windowId === windowId &&
-      Array.isArray(group.tabs) &&
-      group.tabs.length > 0 &&
-      !activeGroupSignatures.has(getGroupUrlSignature(group.tabs))
-    );
-  });
-
   document.getElementById('tabCount').textContent = allTabs.length;
   document.getElementById('groupCount').textContent = tabGroups.length;
 
-  if (tabGroups.length === 0 && closedGroups.length === 0) {
+  if (tabGroups.length === 0) {
     groupsList.innerHTML = '<div class="empty-state">Henüz grup yok.<br>Sekmeleri seçip gruplamaya başlayın!</div>';
     return;
   }
@@ -174,55 +158,6 @@ async function loadGroups() {
 
     groupsList.appendChild(groupItem);
   }
-
-  for (const [savedGroupId, group] of closedGroups) {
-    const groupItem = document.createElement('div');
-    groupItem.className = 'group-item';
-
-    const groupColor = document.createElement('div');
-    groupColor.className = 'group-color';
-    groupColor.style.background = getColorHex(group.color);
-
-    const groupInfo = document.createElement('div');
-    groupInfo.className = 'group-info';
-
-    const groupName = document.createElement('div');
-    groupName.className = 'group-name';
-    groupName.textContent = group.name || 'İsimsiz Grup';
-
-    const groupCount = document.createElement('div');
-    groupCount.className = 'group-count';
-    groupCount.textContent = `${group.tabs.length} sekme • Kapalı grup`;
-
-    const groupActions = document.createElement('div');
-    groupActions.className = 'group-actions';
-
-    const restoreButton = document.createElement('button');
-    restoreButton.className = 'btn-small btn-suspend';
-    restoreButton.textContent = '↩';
-    restoreButton.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await restoreClosedGroup(savedGroupId);
-    });
-
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'btn-small';
-    deleteButton.textContent = '🗑️';
-    deleteButton.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await deleteSavedGroup(savedGroupId);
-    });
-
-    groupInfo.append(groupName, groupCount);
-    groupActions.append(restoreButton, deleteButton);
-    groupItem.append(groupColor, groupInfo, groupActions);
-
-    groupItem.addEventListener('click', async () => {
-      await restoreClosedGroup(savedGroupId);
-    });
-
-    groupsList.appendChild(groupItem);
-  }
 }
 
 // Grubu askıya al (RAM tasarrufu)
@@ -246,11 +181,10 @@ async function deleteGroup(groupId) {
   }
 
   deletingGroupIds.add(groupId);
-  await markGroupAsDeleted(groupId);
-  await deleteSavedGroup(groupId, false);
 
   try {
     const tabs = await chrome.tabs.query({ groupId });
+    await deleteSavedGroup(groupId, false);
     await chrome.tabs.remove(tabs.map(tab => tab.id));
   } finally {
     deletingGroupIds.delete(groupId);
@@ -259,82 +193,6 @@ async function deleteGroup(groupId) {
 }
 
 // Yardımcı fonksiyonlar
-async function restoreClosedGroup(savedGroupId) {
-  if (restoringGroupIds.has(savedGroupId)) {
-    return;
-  }
-
-  restoringGroupIds.add(savedGroupId);
-
-  const groups = await getGroups();
-  const savedGroup = groups[savedGroupId];
-
-  if (!savedGroup || !Array.isArray(savedGroup.tabs) || savedGroup.tabs.length === 0) {
-    restoringGroupIds.delete(savedGroupId);
-    return;
-  }
-
-  delete groups[savedGroupId];
-  await chrome.storage.local.set({ groups });
-  loadGroups();
-
-  const windowId = await getCurrentWindowId();
-
-  if (windowId === undefined) {
-    groups[savedGroupId] = savedGroup;
-    await chrome.storage.local.set({ groups });
-    restoringGroupIds.delete(savedGroupId);
-    alert('Aktif Chrome penceresi bulunamadı!');
-    return;
-  }
-
-  const createdTabs = [];
-
-  for (const tab of savedGroup.tabs) {
-    try {
-      const createdTab = await chrome.tabs.create({
-        windowId,
-        url: tab.url,
-        active: false
-      });
-      createdTabs.push(createdTab);
-    } catch (error) {
-      console.log('Sekme geri açılamadı:', error);
-    }
-  }
-
-  if (createdTabs.length === 0) {
-    groups[savedGroupId] = savedGroup;
-    await chrome.storage.local.set({ groups });
-    restoringGroupIds.delete(savedGroupId);
-    loadGroups();
-    return;
-  }
-
-  const tabIds = createdTabs.map(tab => tab.id);
-  const groupId = await chrome.tabs.group({ tabIds });
-  await chrome.tabGroups.update(groupId, {
-    title: savedGroup.name || 'İsimsiz Grup',
-    color: savedGroup.color || 'blue',
-    collapsed: false
-  });
-  await chrome.tabs.update(createdTabs[0].id, { active: true });
-
-  const latestGroups = await getGroups();
-  latestGroups[groupId] = {
-    ...savedGroup,
-    active: true,
-    collapsed: false,
-    windowId,
-    tabIds,
-    lastUpdated: Date.now()
-  };
-  await chrome.storage.local.set({ groups: latestGroups });
-
-  restoringGroupIds.delete(savedGroupId);
-  loadGroups();
-}
-
 async function deleteSavedGroup(savedGroupId, shouldReload = true) {
   const groups = await getGroups();
   delete groups[savedGroupId];
@@ -343,13 +201,6 @@ async function deleteSavedGroup(savedGroupId, shouldReload = true) {
   if (shouldReload) {
     loadGroups();
   }
-}
-
-async function markGroupAsDeleted(groupId) {
-  const result = await chrome.storage.local.get('deletedGroupIds');
-  const deletedGroupIds = result.deletedGroupIds || {};
-  deletedGroupIds[String(groupId)] = true;
-  await chrome.storage.local.set({ deletedGroupIds });
 }
 
 async function saveActiveGroups(tabGroups, allTabs) {
@@ -406,14 +257,6 @@ function getColorHex(color) {
     cyan: '#007b83'
   };
   return colors[color] || colors.blue;
-}
-
-function getGroupUrlSignature(tabs) {
-  return tabs
-    .map(tab => tab.url)
-    .filter(Boolean)
-    .sort()
-    .join('|');
 }
 
 // Sayfa yüklendiğinde grupları göster
